@@ -6,6 +6,7 @@ bgrgba: "0,0,0,0"
 font_path: "helvetica-b.ttf"
 out: "decal_custom.png"
 font_color: [189, 204, 223, 255]
+draw_bboxes: false
 
 side_font: 64
 end_font: 32

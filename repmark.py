@@ -185,7 +185,7 @@ def draw_block_stacked_on_space(
     return results
 
 # === Export + Draw BBoxes ===
-def export_and_draw_bounding_boxes(draw, image, side_results, end_results, out_path_base="bbox_data", draw_boxes=False):
+def export_and_draw_bounding_boxes(draw, image, side_results, end_results, out_path_base="bbox_data", draw_boxes=False, bbox_padding=5):
     """Export bounding box data and optionally draw outlines."""
     txt_path = Path(f"{out_path_base}_bboxes.txt")
     json_path = Path(f"{out_path_base}_bboxes.json")
@@ -216,19 +216,26 @@ def export_and_draw_bounding_boxes(draw, image, side_results, end_results, out_p
 
     # --- Draw outlines if enabled ---
 
-    def pad_bbox(b):
-        x0, y0, x1, y1 = b
-        return (x0 - padding, y0 - padding, x1 + padding, y1 + padding)
+    # --- Draw outlines only if explicitly enabled ---
+    if draw_boxes:
+        padding = bbox_padding if "bbox_padding" in locals() else 10
 
-    for _, bbox in side_results:
-        draw.rectangle(pad_bbox(bbox), outline=(255, 0, 0, 255), width=2)
+        def pad_bbox(b):
+            x0, y0, x1, y1 = b
+            return (x0 - padding, y0 - padding, x1 + padding, y1 + padding)
 
-    for _, bbox_top, bbox_bottom in end_results:
-        draw.rectangle(pad_bbox(bbox_top), outline=(255, 0, 0, 255), width=2)
-        if bbox_bottom != bbox_top:
-            draw.rectangle(pad_bbox(bbox_bottom), outline=(255, 0, 0, 255), width=2)
+        for _, bbox in side_results:
+            draw.rectangle(pad_bbox(bbox), outline=(255, 0, 0, 255), width=2)
 
-    print(f"🎨 Red outlines drawn on image (with {padding}px padding).")
+        for _, bbox_top, bbox_bottom in end_results:
+            draw.rectangle(pad_bbox(bbox_top), outline=(255, 0, 0, 255), width=2)
+            if bbox_bottom != bbox_top:
+                draw.rectangle(pad_bbox(bbox_bottom), outline=(255, 0, 0, 255), width=2)
+
+        print(f"🎨 Red outlines drawn on image (with {padding}px padding).")
+    else:
+        print("🎨 Red outlines skipped (draw_bboxes=False).")
+
 
 # === Main ===
 def main():
@@ -239,7 +246,22 @@ def main():
     args = ap.parse_args()
 
     cfg = load_yaml_config(Path(args.yaml)) if args.yaml else DEFAULT_CONFIG
-    draw_bboxes = args.draw_bboxes or cfg.get("draw_bboxes", False)
+    #draw_bboxes = args.draw_bboxes or cfg.get("draw_bboxes", False)
+
+    # Draw red outlines only if explicitly enabled by CLI or YAML
+    # Determine if red outlines should be drawn
+    cfg_draw_bboxes = cfg.get("draw_bboxes", False)
+
+    # Normalize possible YAML string values like "False" or "false"
+    if isinstance(cfg_draw_bboxes, str):
+        cfg_draw_bboxes = cfg_draw_bboxes.strip().lower() in ("1", "true", "yes", "on")
+
+   
+
+    # Only draw boxes if CLI explicitly requests it or YAML is true
+    draw_bboxes = bool(args.draw_bboxes) or bool(cfg_draw_bboxes)
+    # debug
+    #print(f"🔧 draw_bboxes resolved to: {draw_bboxes}")
 
     w, h = cfg["width"], cfg["height"]
     bg = tuple(int(c) for c in cfg["bgrgba"].split(","))
@@ -276,7 +298,8 @@ def main():
     export_and_draw_bounding_boxes(
         draw, image, side_results, end_results,
         out_path_base=out_path.stem,
-        draw_boxes=draw_bboxes
+        draw_boxes=draw_bboxes,
+        bbox_padding=cfg.get("bbox_padding", 5)
     )
 
     # Save after drawing outlines (so they’re visible)
