@@ -1,0 +1,61 @@
+# Config file for MakeDecal.py
+# Limit: 12 entries with current values
+width: 1024
+height: 1024
+bgrgba: "0,0,0,0"
+font_path: "helvetica-b.ttf"
+out: "decal_custom.png"
+font_color: [189, 204, 223, 255]
+
+side_font: 64
+end_font: 32
+side_x: 5
+side_y: 5
+side_spacing: 10
+end_x: 500
+end_y: 5
+end_spacing: 20
+end_inner_gap: 2
+end_inline: false # default stacking ON, but overridable per entry
+inline_gap_factor: 0.35
+
+side_lines:
+  - "998 235"
+  - "998 375"
+  - "998 369"
+  - "998 366"
+  - "998 344"
+  - "998 343"
+  - "998 355"
+  - "998 349"
+  - "998 293"
+  - "998 292"
+  - "998 279"
+  - "998 270"
+ 
+end_lines:
+  - value: "NS 998235"
+    stacked: true
+  - value: "NS 998375"
+    stacked: true
+  - value: "NS 998369"
+    stacked: true
+  - value: "NS 998366"
+    stacked: true
+  - value: "NS 998344"
+    stacked: true
+  - value: "NS 998343"
+    stacked: true
+  - value: "NS 998355"
+    stacked: true
+  - value: "NS 998349"
+    stacked: true
+  - value: "NS 998293"
+    stacked: true
+  - value: "NS 998292"
+    stacked: true
+  - value: "NS 998279"
+    stacked: true
+  - value: "NS 998270"
+    stacked: true
+
