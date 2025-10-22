@@ -1,15 +1,15 @@
 # Config file for MakeDecal.py
 # Limit: 12 entries with current values
-width: 1024
-height: 1024
+width: 2048
+height: 2048
 bgrgba: "0,0,0,0"
 font_path: "helvetica-b.ttf"
 out: "decal_custom.png"
 font_color: [189, 204, 223, 255]
 draw_bboxes: false
 
-side_font: 64
-end_font: 32
+side_font: 128
+end_font: 64
 side_x: 5
 side_y: 5
 side_spacing: 10

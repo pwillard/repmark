@@ -18,13 +18,13 @@ from typing import List, Tuple, Union
 
 # === Defaults ===
 DEFAULT_SIDE_LINES = [
-    "998 286","998 375","998 369","998 366","998 344",
+    "999 286","998 375","998 369","998 366","998 344",
     "998 343","998 355","998 349","998 293","998 292",
     "998 279","998 270","998 235"
 ]
 
 DEFAULT_END_LINES = [
-    {"value": "NS 998286", "stacked": True},
+    {"value": "NS 999286", "stacked": True},
     {"value": "NS 998375", "stacked": True},
     {"value": "NS 998369", "stacked": True},
     {"value": "NS 998366", "stacked": True},

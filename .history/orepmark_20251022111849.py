@@ -18,13 +18,13 @@ from typing import List, Tuple, Union
 
 # === Defaults ===
 DEFAULT_SIDE_LINES = [
-    "998 286","998 375","998 369","998 366","998 344",
+    "999 286","998 375","998 369","998 366","998 344",
     "998 343","998 355","998 349","998 293","998 292",
     "998 279","998 270","998 235"
 ]
 
 DEFAULT_END_LINES = [
-    {"value": "NS 998286", "stacked": True},
+    {"value": "NS 999286", "stacked": True},
     {"value": "NS 998375", "stacked": True},
     {"value": "NS 998369", "stacked": True},
     {"value": "NS 998366", "stacked": True},
@@ -184,19 +184,19 @@ def draw_block_stacked_on_space(
         results.append((line, bbox_top, bbox_bottom))
     return results
 
-# === Export + Draw BBoxes ===
-"""Export bounding box data and optionally draw outlines."""
-def export_and_draw_bounding_boxes(
-    draw,
-    image,
-    side_results,
-    end_results,
-    out_path_base="bbox_data",
-    draw_boxes=False,
-    side_font_size=64,
-    end_font_size=28,
-    bbox_padding=None  # None means auto-scale mode
-):
+    # === Export + Draw BBoxes ===
+    """Export bounding box data and optionally draw outlines."""
+    def export_and_draw_bounding_boxes(
+        draw,
+        image,
+        side_results,
+        end_results,
+        out_path_base="bbox_data",
+        draw_boxes=False,
+        side_font_size=64,
+        end_font_size=28,
+        bbox_padding=None  # None means auto-scale mode
+    ):
         
     txt_path = Path(f"{out_path_base}_bboxes.txt")
     json_path = Path(f"{out_path_base}_bboxes.json")
