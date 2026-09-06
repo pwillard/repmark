@@ -1,24 +1,56 @@
-# Config file for MakeDecal.py
-# Limit: 12 entries with current values
+# repmark sample configuration
+
+# Output canvas in pixels.
 width: 2048
 height: 2048
-bgrgba: "0,0,0,0"
-font_path: "helvetica-b.ttf"
-out: "decal_custom.png"
-font_color: [189, 204, 223, 255]
-draw_bboxes: false
 
+# Transparent background. Format is "R,G,B,A".
+bgrgba: "0,0,0,0"
+
+# Font paths may be relative to this config file, the application folder, or fonts/.
+font_path: "fonts/helvetica-b.ttf"
+out: "out/decal_custom.png"
+
+# Text color as [R, G, B, A].
+font_color: [189, 204, 223, 255]
+
+# Set true to draw red debug boxes without passing --draw-bboxes.
+draw_bboxes: false
+# Optional fixed padding for debug boxes. Omit or set null for automatic padding.
+bbox_padding: null
+
+# Side marks: large marks drawn one per row.
 side_font: 128
-end_font: 64
 side_x: 5
 side_y: 5
 side_spacing: 10
+
+# End marks: smaller marks drawn stacked or inline.
+# 56 is slightly smaller than the side marks while end_spacing 24 keeps each
+# stacked end-mark row aligned with side_font 128 and side_spacing 10.
+end_font: 56
 end_x: 500
 end_y: 5
-end_spacing: 20
+end_spacing: 24
 end_inner_gap: 2
-end_inline: false # default stacking ON, but overridable per entry
+
+# Shift end marks at render time so the first stacked end-mark bottom aligns
+# with the first side-mark bounding-box bottom.
+align_end_bottom_to_side: true
+
+# When false, string-only end_lines default to stacked layout.
+# Individual end_lines can still override this with stacked: true/false.
+end_inline: false
+
+# Inline spacing is calculated from the width of the first word.
 inline_gap_factor: 0.35
+
+# Optional CSV roster import. When csv_path is set, side_lines and end_lines
+# below act as a layout/template fallback and are replaced by CSV rows at run time.
+# One-column CSV files use csv_prefix. Two-column/header CSV files may include
+# prefix/reporting_mark and number/car_number columns.
+csv_path: ""
+csv_prefix: "NS"
 
 side_lines:
   - "998 235"
@@ -33,7 +65,12 @@ side_lines:
   - "998 292"
   - "998 279"
   - "998 270"
- 
+
+# Each end line may use:
+#   - value: "NS 998235"
+#     stacked: true
+# or a simple string such as:
+#   - "NS 998235"
 end_lines:
   - value: "NS 998235"
     stacked: true

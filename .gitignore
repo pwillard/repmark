@@ -1,1 +1,9 @@
 decal*.*
+__pycache__/
+build/
+dist/
+out/
+*.spec
+*.json
+*.bat
+*.txt
