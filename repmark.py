@@ -19,7 +19,26 @@ import json
 from pathlib import Path
 from typing import List, Tuple, Union
 
-APP_VERSION = "1.0.2"
+VERSION_FALLBACK = "1.0.7"
+
+
+def load_app_version() -> str:
+    """Load the visible app version from VERSION, with a safe frozen fallback."""
+    bases = [Path(__file__).resolve().parent]
+    if getattr(sys, "frozen", False):
+        bases.insert(0, Path(sys.executable).resolve().parent)
+    if hasattr(sys, "_MEIPASS"):
+        bases.insert(0, Path(sys._MEIPASS))  # type: ignore[attr-defined]
+    for base in bases:
+        version_file = base / "VERSION"
+        if version_file.exists():
+            value = version_file.read_text(encoding="utf-8").strip()
+            if value:
+                return value
+    return VERSION_FALLBACK
+
+
+APP_VERSION = load_app_version()
 
 def configure_stdio():
     """Avoid Windows console encoding crashes when status messages contain symbols."""
@@ -68,6 +87,7 @@ DEFAULT_CONFIG = {
     "font_path": "fonts/helvetica-b.ttf",
     "out": "out/decalresult.png",
     "font_color": [189, 204, 223, 255],
+    "font_stroke_width": 0,
     "side_lines": DEFAULT_SIDE_LINES,
     "end_lines": DEFAULT_END_LINES,
     "inline_gap_factor": 0.3,
@@ -285,6 +305,10 @@ def validate_config(cfg):
     except ValueError as exc:
         errors.append(str(exc))
 
+    if "font_stroke_width" in cfg:
+        if not isinstance(cfg["font_stroke_width"], int) or cfg["font_stroke_width"] < 0:
+            errors.append("font_stroke_width must be a non-negative integer.")
+
     if not isinstance(cfg.get("side_lines"), list):
         errors.append("side_lines must be a list of text strings.")
     else:
@@ -331,12 +355,27 @@ def validate_config(cfg):
     return True
 
 # === Drawing functions ===
-def draw_block_inline(draw, lines, font, start_xy, line_spacing, fill_rgba):
+def draw_text(draw, xy, text, font, fill_rgba, stroke_width=0):
+    draw.text(
+        xy,
+        text,
+        font=font,
+        fill=fill_rgba,
+        stroke_width=stroke_width,
+        stroke_fill=fill_rgba,
+    )
+
+
+def text_bbox(draw, xy, text, font, stroke_width=0):
+    return draw.textbbox(xy, text, font=font, stroke_width=stroke_width)
+
+
+def draw_block_inline(draw, lines, font, start_xy, line_spacing, fill_rgba, stroke_width=0):
     x, y = start_xy
     results = []
     for line in lines:
-        draw.text((x, y), line, font=font, fill=fill_rgba)
-        bbox = draw.textbbox((x, y), line, font=font)
+        draw_text(draw, (x, y), line, font, fill_rgba, stroke_width)
+        bbox = text_bbox(draw, (x, y), line, font, stroke_width)
         results.append((line, bbox))
         y += font.size + line_spacing
     return results
@@ -350,7 +389,8 @@ def draw_block_stacked_on_space(
     inner_stack_gap=0,
     fill_rgba=(189,204,223,255),
     force_stack_default=False,
-    inline_gap_factor: float = 0.3
+    inline_gap_factor: float = 0.3,
+    stroke_width: int = 0,
 ):
     """
     Draw text blocks that can be stacked or inline with adaptive spacing.
@@ -384,29 +424,29 @@ def draw_block_stacked_on_space(
 
         if do_stack:
             # --- Vertical stacking ---
-            draw.text((x, y), top, font=font, fill=fill_rgba)
-            bbox_top = draw.textbbox((x, y), top, font=font)
+            draw_text(draw, (x, y), top, font, fill_rgba, stroke_width)
+            bbox_top = text_bbox(draw, (x, y), top, font, stroke_width)
             y2 = y + font.size + inner_stack_gap
-            draw.text((x, y2), bottom, font=font, fill=fill_rgba)
-            bbox_bottom = draw.textbbox((x, y2), bottom, font=font)
+            draw_text(draw, (x, y2), bottom, font, fill_rgba, stroke_width)
+            bbox_bottom = text_bbox(draw, (x, y2), bottom, font, stroke_width)
             y += (font.size * 2) + inner_stack_gap + block_spacing
         elif has_space:
             # --- Inline with adaptive gap ---
             prefix_width = draw.textlength(top, font=font)
             adaptive_gap = int(prefix_width * inline_gap_factor)
-            draw.text((x, y), top, font=font, fill=fill_rgba)
+            draw_text(draw, (x, y), top, font, fill_rgba, stroke_width)
             x2 = x + prefix_width + adaptive_gap
-            draw.text((x2, y), bottom, font=font, fill=fill_rgba)
-            bbox_top = draw.textbbox((x, y), top, font=font)
-            bbox_bottom = draw.textbbox((x2, y), bottom, font=font)
+            draw_text(draw, (x2, y), bottom, font, fill_rgba, stroke_width)
+            bbox_top = text_bbox(draw, (x, y), top, font, stroke_width)
+            bbox_bottom = text_bbox(draw, (x2, y), bottom, font, stroke_width)
             combined_bbox = (bbox_top[0], bbox_top[1], bbox_bottom[2], bbox_bottom[3])
             y += font.size + block_spacing
             results.append((line, bbox_top, combined_bbox))
             continue
         else:
             # --- Single unstacked line ---
-            draw.text((x, y), line, font=font, fill=fill_rgba)
-            bbox_top = draw.textbbox((x, y), line, font=font)
+            draw_text(draw, (x, y), line, font, fill_rgba, stroke_width)
+            bbox_top = text_bbox(draw, (x, y), line, font, stroke_width)
             bbox_bottom = bbox_top
             y += font.size + block_spacing
 
@@ -473,7 +513,8 @@ def aligned_end_y(cfg, side_results, end_lines, end_font, font_color, image_size
         cfg["end_inner_gap"],
         font_color,
         force_stack_default=not cfg["end_inline"],
-        inline_gap_factor=cfg.get("inline_gap_factor", 0.3)
+        inline_gap_factor=cfg.get("inline_gap_factor", 0.3),
+        stroke_width=cfg.get("font_stroke_width", 0),
     )
     if not trial_results:
         return start_y
@@ -616,6 +657,7 @@ def main():
     config_dir = Path(cfg.get("_config_dir", app_dir()))
     font_path = Path(cfg["font_path"])
     font_color = tuple(cfg["font_color"])
+    font_stroke_width = cfg.get("font_stroke_width", 0)
     side_lines = cfg["side_lines"]
     end_lines = cfg["end_lines"]
 
@@ -627,7 +669,7 @@ def main():
     end_font  = load_font(font_path, cfg["end_font"], config_dir)
 
     # --- Draw sides ---
-    side_results = draw_block_inline(draw, side_lines, side_font, (cfg["side_x"], cfg["side_y"]), cfg["side_spacing"], font_color)
+    side_results = draw_block_inline(draw, side_lines, side_font, (cfg["side_x"], cfg["side_y"]), cfg["side_spacing"], font_color, font_stroke_width)
 
     # --- Draw ends ---
     end_start_y = aligned_end_y(cfg, side_results, end_lines, end_font, font_color, (w, h))
@@ -640,7 +682,8 @@ def main():
         cfg["end_inner_gap"],
         font_color,
         force_stack_default=not cfg["end_inline"],
-        inline_gap_factor=cfg.get("inline_gap_factor", 0.3)
+        inline_gap_factor=cfg.get("inline_gap_factor", 0.3),
+        stroke_width=font_stroke_width,
     )
 
     warn_if_text_exceeds_canvas(side_results, end_results, w, h)

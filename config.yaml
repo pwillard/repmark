@@ -13,6 +13,8 @@ out: "out/decal_custom.png"
 
 # Text color as [R, G, B, A].
 font_color: [189, 204, 223, 255]
+# Synthetic bold/thicker text. 0 uses the font as-is; 1 or 2 adds weight.
+font_stroke_width: 0
 
 # Set true to draw red debug boxes without passing --draw-bboxes.
 draw_bboxes: false

@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import configparser
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import BOTH, BOTTOM, END, LEFT, RIGHT, TOP, VERTICAL, X, Y, BooleanVar, Button, Checkbutton, Entry, Frame, Label, LabelFrame, Menu, PhotoImage, StringVar, Tk, Toplevel, filedialog, messagebox, ttk
+from tkinter import BOTH, BOTTOM, END, LEFT, RIGHT, TOP, VERTICAL, X, Y, BooleanVar, Button, Checkbutton, Entry, Frame, Label, LabelFrame, Listbox, Menu, PhotoImage, Spinbox, StringVar, Tk, Toplevel, filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
+
+from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 import repmark
 
@@ -129,6 +133,95 @@ def banner_image_path() -> Path:
     return resource_path(Path("assets") / "RepMark_RSS.png")
 
 
+def fonts_dir() -> Path:
+    return resource_path("fonts")
+
+
+def available_font_files() -> list[Path]:
+    folder = fonts_dir()
+    if not folder.exists():
+        return []
+    fonts = []
+    for pattern in ("*.ttf", "*.otf", "*.TTF", "*.OTF"):
+        fonts.extend(folder.glob(pattern))
+    return sorted(set(fonts), key=lambda p: p.name.lower())
+
+
+def read_yaml_font_path(yaml_path: str) -> str:
+    path = Path(yaml_path).expanduser()
+    if not path.exists():
+        return ""
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            match = re.match(r'^\s*font_path\s*:\s*["\']?([^"\'#]+)["\']?\s*(?:#.*)?$', line)
+            if match:
+                return match.group(1).strip()
+    except OSError:
+        return ""
+    return ""
+
+
+def read_yaml_int_setting(yaml_path: str, key: str, default: int = 0) -> int:
+    path = Path(yaml_path).expanduser()
+    if not path.exists():
+        return default
+    pattern = re.compile(rf'^\s*{re.escape(key)}\s*:\s*([0-9]+)\s*(?:#.*)?$')
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            match = pattern.match(line)
+            if match:
+                return int(match.group(1))
+    except OSError:
+        return default
+    return default
+
+
+def write_yaml_font_path(yaml_path: str, font_path: str) -> None:
+    path = Path(yaml_path).expanduser()
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    lines = text.splitlines()
+    replacement = f'font_path: "{font_path}"'
+    for index, line in enumerate(lines):
+        if re.match(r"^\s*font_path\s*:", line):
+            indent = re.match(r"^(\s*)", line).group(1)
+            comment = ""
+            if "#" in line:
+                comment = "  #" + line.split("#", 1)[1]
+            lines[index] = f'{indent}{replacement}{comment}'
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            return
+    insert_at = 0
+    for index, line in enumerate(lines):
+        if line.strip() and not line.lstrip().startswith("#"):
+            insert_at = index
+            break
+    lines.insert(insert_at, replacement)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_yaml_int_setting(yaml_path: str, key: str, value: int) -> None:
+    path = Path(yaml_path).expanduser()
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    lines = text.splitlines()
+    replacement = f"{key}: {value}"
+    for index, line in enumerate(lines):
+        if re.match(rf"^\s*{re.escape(key)}\s*:", line):
+            indent = re.match(r"^(\s*)", line).group(1)
+            comment = ""
+            if "#" in line:
+                comment = "  #" + line.split("#", 1)[1]
+            lines[index] = f"{indent}{replacement}{comment}"
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            return
+    insert_at = 0
+    for index, line in enumerate(lines):
+        if line.strip() and not line.lstrip().startswith("#"):
+            insert_at = index + 1
+            break
+    lines.insert(insert_at, replacement)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def default_repmark_cmd() -> str:
     for base in (app_dir(), bundled_dir()):
         for name in ("repmark.exe", "repmark"):
@@ -168,6 +261,8 @@ class RepMarkGui:
 
         self.config = self.load_config()
         self.yaml_path = StringVar(value=self.config.get("settings", "yaml_path", fallback=str(resource_path("config.yaml"))))
+        self.font_path = StringVar(value=read_yaml_font_path(self.yaml_path.get()) or repmark.DEFAULT_CONFIG["font_path"])
+        self.font_stroke_width = StringVar(value=str(read_yaml_int_setting(self.yaml_path.get(), "font_stroke_width", repmark.DEFAULT_CONFIG["font_stroke_width"])))
         self.repmark_cmd = StringVar(value=self.resolve_repmark_cmd(self.config.get("settings", "repmark_cmd", fallback="")))
         self.csv_path = StringVar(value=self.config.get("settings", "csv_path", fallback=""))
         self.csv_prefix = StringVar(value=self.config.get("settings", "csv_prefix", fallback="NS"))
@@ -180,6 +275,7 @@ class RepMarkGui:
         self.worker: threading.Thread | None = None
         self.last_output_path: Path | None = None
         self.banner_image = None
+        self.font_preview_image = None
 
         self.configure_style()
         self.build_ui()
@@ -347,6 +443,13 @@ class RepMarkGui:
         Button(lf, text="New Default Config", command=self.create_default_config).grid(row=1, column=1, sticky="w", padx=(6, 4), pady=(8, 0))
         Button(lf, text="Edit Config", command=self.open_config).grid(row=1, column=1, sticky="e", padx=(4, 4), pady=(8, 0))
         Button(lf, text="Open Config Folder", command=self.open_config_folder).grid(row=1, column=2, columnspan=2, sticky="ew", pady=(8, 0))
+        Label(lf, text="Font:", bg=PANEL).grid(row=2, column=0, sticky="w", pady=(8, 0))
+        Entry(lf, textvariable=self.font_path, width=58, state="readonly").grid(row=2, column=1, sticky="ew", padx=(6, 6), pady=(8, 0))
+        Button(lf, text="Choose Font...", command=self.choose_font).grid(row=2, column=2, columnspan=2, sticky="ew", pady=(8, 0))
+        Label(lf, text="Stroke:", bg=PANEL).grid(row=3, column=0, sticky="w", pady=(8, 0))
+        Spinbox(lf, from_=0, to=6, width=6, textvariable=self.font_stroke_width, command=self.apply_font_stroke).grid(row=3, column=1, sticky="w", padx=(6, 6), pady=(8, 0))
+        Button(lf, text="Apply Stroke", command=self.apply_font_stroke).grid(row=3, column=2, columnspan=2, sticky="ew", pady=(8, 0))
+        Label(lf, text="0 = true font; 1-2 adds synthetic bold weight.", bg=PANEL, fg="#666").grid(row=4, column=1, columnspan=3, sticky="w", padx=(6, 0), pady=(4, 0))
         lf.columnconfigure(1, weight=1)
 
     def build_roster_panel(self, parent: Frame) -> None:
@@ -436,7 +539,136 @@ class RepMarkGui:
         path = filedialog.askopenfilename(parent=self.root, initialdir=str(Path(self.yaml_path.get() or app_dir()).parent), title="Select repmark YAML config", filetypes=[("YAML files", "*.yaml *.yml"), ("All files", "*")])
         if path:
             self.yaml_path.set(path)
+            self.refresh_font_from_yaml()
             self.save_recent(path)
+
+    def refresh_font_from_yaml(self) -> None:
+        current = read_yaml_font_path(self.yaml_path.get())
+        self.font_path.set(current or repmark.DEFAULT_CONFIG["font_path"])
+        self.font_stroke_width.set(str(read_yaml_int_setting(self.yaml_path.get(), "font_stroke_width", repmark.DEFAULT_CONFIG["font_stroke_width"])))
+
+    def stroke_width_value(self) -> int:
+        try:
+            value = int(self.font_stroke_width.get())
+        except ValueError:
+            value = 0
+        value = max(0, min(6, value))
+        self.font_stroke_width.set(str(value))
+        return value
+
+    def apply_font_stroke(self) -> None:
+        yaml_path = Path(self.yaml_path.get()).expanduser()
+        if not yaml_path.exists():
+            messagebox.showwarning("Config not found", f"Select or create a YAML config before setting stroke width:\n\n{yaml_path}", parent=self.root)
+            return
+        value = self.stroke_width_value()
+        try:
+            write_yaml_int_setting(str(yaml_path), "font_stroke_width", value)
+        except OSError as exc:
+            messagebox.showerror("Stroke update failed", f"Could not update YAML config:\n\n{yaml_path}\n\n{exc}", parent=self.root)
+            return
+        self.log_line(f"[RepMark] Updated {yaml_path.name} font_stroke_width to {value}")
+
+    def choose_font(self) -> None:
+        yaml_path = Path(self.yaml_path.get()).expanduser()
+        if not yaml_path.exists():
+            messagebox.showwarning("Config not found", f"Select or create a YAML config before choosing a font:\n\n{yaml_path}", parent=self.root)
+            return
+
+        fonts = available_font_files()
+        if not fonts:
+            messagebox.showwarning("No fonts found", f"No .ttf or .otf fonts were found in:\n\n{fonts_dir()}", parent=self.root)
+            return
+
+        colors = self.palette()
+        win = Toplevel(self.root)
+        win.title("Choose RepMark Font")
+        win.configure(bg=colors.app_bg)
+        win.transient(self.root)
+        win.geometry("760x420")
+        win.minsize(680, 360)
+
+        left = Frame(win, bg=colors.app_bg)
+        left.pack(side=LEFT, fill=Y, padx=(10, 6), pady=10)
+        right = Frame(win, bg=colors.app_bg)
+        right.pack(side=RIGHT, fill=BOTH, expand=True, padx=(6, 10), pady=10)
+
+        Label(left, text="Fonts folder", bg=colors.app_bg, fg=colors.text_fg, font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        list_frame = Frame(left, bg=colors.app_bg)
+        list_frame.pack(fill=BOTH, expand=True, pady=(4, 0))
+        font_list = Listbox(list_frame, width=34, height=18, bg=colors.input_bg, fg=colors.text_fg, selectbackground=colors.tree_selected_bg, selectforeground=colors.tree_selected_fg)
+        scroll = ttk.Scrollbar(list_frame, orient=VERTICAL, command=font_list.yview)
+        font_list.configure(yscrollcommand=scroll.set)
+        font_list.pack(side=LEFT, fill=BOTH, expand=True)
+        scroll.pack(side=RIGHT, fill=Y)
+
+        for font in fonts:
+            font_list.insert(END, font.name)
+
+        Label(right, text="Preview", bg=colors.app_bg, fg=colors.text_fg, font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        preview_label = Label(right, bg=colors.input_bg, relief="sunken", padx=8, pady=8)
+        preview_label.pack(fill=X, pady=(4, 8))
+        chosen = StringVar(value="")
+        detail = Label(right, text="", bg=colors.app_bg, fg=colors.muted_fg, wraplength=430, justify="left")
+        detail.pack(anchor="w", fill=X)
+
+        current_name = Path(self.font_path.get()).name.lower()
+        selected_index = 0
+        for index, font in enumerate(fonts):
+            if font.name.lower() == current_name:
+                selected_index = index
+                break
+
+        def render_preview(_event=None) -> None:
+            selection = font_list.curselection()
+            if not selection:
+                return
+            font_path = fonts[selection[0]]
+            chosen.set(str(font_path))
+            sample = "NS 998235   998 235"
+            stroke_width = self.stroke_width_value()
+            image = Image.new("RGBA", (480, 150), (255, 255, 255, 255))
+            draw = ImageDraw.Draw(image)
+            try:
+                font = ImageFont.truetype(str(font_path), 46)
+            except Exception as exc:
+                draw.text((12, 42), f"Could not preview font: {exc}", fill=(120, 0, 0, 255))
+            else:
+                bbox = draw.textbbox((0, 0), sample, font=font, stroke_width=stroke_width)
+                text_w = bbox[2] - bbox[0]
+                text_h = bbox[3] - bbox[1]
+                x = max(12, (image.width - text_w) // 2)
+                y = max(12, (image.height - text_h) // 2 - bbox[1])
+                draw.text((x, y), sample, font=font, fill=(40, 40, 40, 255), stroke_width=stroke_width, stroke_fill=(40, 40, 40, 255))
+            preview = ImageTk.PhotoImage(image)
+            preview_label.configure(image=preview)
+            preview_label.image = preview
+            detail.configure(text=f"{font_path.name}\nYAML value: fonts/{font_path.name}\nPreview stroke width: {stroke_width}")
+
+        def apply_selection() -> None:
+            selection = font_list.curselection()
+            if not selection:
+                return
+            font_path = fonts[selection[0]]
+            yaml_value = f"fonts/{font_path.name}"
+            try:
+                write_yaml_font_path(str(yaml_path), yaml_value)
+            except OSError as exc:
+                messagebox.showerror("Font update failed", f"Could not update YAML config:\n\n{yaml_path}\n\n{exc}", parent=win)
+                return
+            self.font_path.set(yaml_value)
+            self.log_line(f"[RepMark] Updated {yaml_path.name} font_path to {yaml_value}")
+            win.destroy()
+
+        font_list.bind("<<ListboxSelect>>", render_preview)
+        font_list.selection_set(selected_index)
+        font_list.see(selected_index)
+        render_preview()
+
+        button_row = Frame(right, bg=colors.app_bg)
+        button_row.pack(side=BOTTOM, fill=X, pady=(10, 0))
+        Button(button_row, text="Use Selected Font", command=apply_selection).pack(side=LEFT, padx=(0, 8))
+        Button(button_row, text="Cancel", command=win.destroy).pack(side=LEFT)
 
     def browse_csv(self) -> None:
         start = Path(self.csv_path.get() or self.yaml_path.get() or app_dir()).expanduser()
@@ -469,6 +701,7 @@ class RepMarkGui:
 
     def select_recent(self, path: str) -> None:
         self.yaml_path.set(path)
+        self.refresh_font_from_yaml()
         self.save_config()
 
     def create_default_config(self) -> None:
@@ -532,6 +765,8 @@ class RepMarkGui:
 
     def run_repmark(self, extra_args: list[str], create_only: bool = False) -> None:
         self.save_config()
+        if Path(self.yaml_path.get()).expanduser().exists():
+            self.apply_font_stroke()
         repmark_cmd = self.repmark_cmd.get().strip()
         if not repmark_cmd or not (Path(repmark_cmd).exists() or shutil.which(repmark_cmd)):
             messagebox.showerror("repmark.exe not found", f"Could not find repmark.exe:\n\n{repmark_cmd}", parent=self.root)
@@ -574,6 +809,7 @@ class RepMarkGui:
             if self.open_folder_after_run.get() and self.last_output_path:
                 safe_open_path(self.last_output_path.parent)
             if create_only:
+                self.refresh_font_from_yaml()
                 messagebox.showinfo("Config created", f"Default config created:\n\n{self.yaml_path.get()}", parent=self.root)
             else:
                 messagebox.showinfo("RepMark complete", "Decal generation completed successfully.", parent=self.root)
@@ -598,7 +834,7 @@ class RepMarkGui:
         win.configure(bg=colors.app_bg)
         text = ScrolledText(win, width=88, height=28, bg=colors.log_bg, fg=colors.log_fg, insertbackground=colors.log_fg)
         text.pack(fill=BOTH, expand=True, padx=8, pady=8)
-        text.insert(END, f"""{APP_NAME} {APP_VERSION}\n\nThis is a focused front-end for repmark.exe. It keeps the command-line EXE as the source of truth and runs it in the background so the GUI stays responsive.\n\nWorkflow:\n  1. Choose a YAML config.\n  2. Optionally choose a CSV roster and reporting mark prefix.\n  3. Select debug/output options.\n  4. Click Generate Decal.\n  5. Review validation messages, layout warnings, and generated file paths in the log.\n\nTips:\n  - Use Draw red debug boxes when positioning text.\n  - Use Print bounding boxes to log when placing decals in Blender/Open Rails.\n  - Use New Default Config to create a starter YAML file.\n  - A one-column CSV can contain only numbers; the Prefix field supplies NS or another reporting mark.\n  - The default output folder is out/ beside the running EXE.\n""")
+        text.insert(END, f"""{APP_NAME} {APP_VERSION}\n\nThis is a focused front-end for repmark.exe. It keeps the command-line EXE as the source of truth and runs it in the background so the GUI stays responsive.\n\nWorkflow:\n  1. Choose a YAML config.\n  2. Optionally choose a font from the fonts/ folder and write it to the YAML config.\n  3. Optionally choose a CSV roster and reporting mark prefix.\n  4. Select debug/output options.\n  5. Click Generate Decal.\n  6. Review validation messages, layout warnings, and generated file paths in the log.\n\nTips:\n  - Use Draw red debug boxes when positioning text.\n  - Use Print bounding boxes to log when placing decals in Blender/Open Rails.\n  - Use New Default Config to create a starter YAML file.\n  - Use Choose Font to preview fonts from fonts/ and update font_path in the selected YAML file.\n  - Use Stroke in the Configuration panel to set font_stroke_width without opening the YAML by hand.\n  - A one-column CSV can contain only numbers; the Prefix field supplies NS or another reporting mark.\n  - The default output folder is out/ beside the running EXE.\n""")
         text.config(state="disabled")
 
 
@@ -614,6 +850,19 @@ def run_self_tests() -> int:
     cmd = ["repmark.exe", "--yaml", "config.yaml", "--preview"]
     assert "--preview" in cmd
     assert repmark.reporting_marks_to_lines([("NS", "998235")]) == (["998 235"], [{"value": "NS 998235", "stacked": True}])
+    with tempfile.TemporaryDirectory() as tmp:
+        yaml_path = Path(tmp) / "font_test.yaml"
+        yaml_path.write_text('width: 100\nfont_path: "fonts/helvetica-b.ttf"  # keep comment\nout: "out/test.png"\n', encoding="utf-8")
+        assert read_yaml_font_path(str(yaml_path)) == "fonts/helvetica-b.ttf"
+        write_yaml_font_path(str(yaml_path), "fonts/Carknocker.ttf")
+        updated = yaml_path.read_text(encoding="utf-8")
+        assert 'font_path: "fonts/Carknocker.ttf"  # keep comment' in updated
+        assert read_yaml_font_path(str(yaml_path)) == "fonts/Carknocker.ttf"
+        yaml_path.write_text(updated + "font_stroke_width: 2\n", encoding="utf-8")
+        assert read_yaml_int_setting(str(yaml_path), "font_stroke_width", 0) == 2
+        write_yaml_int_setting(str(yaml_path), "font_stroke_width", 3)
+        assert read_yaml_int_setting(str(yaml_path), "font_stroke_width", 0) == 3
+    assert available_font_files()
     print("repmark gui self-tests passed")
     return 0
 

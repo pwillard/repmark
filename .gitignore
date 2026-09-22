@@ -3,7 +3,8 @@ __pycache__/
 build/
 dist/
 out/
+release/
 *.spec
-*.json
-*.bat
-*.txt
+*_bboxes.json
+*_bboxes.txt
+state.txt

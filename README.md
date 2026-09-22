@@ -74,6 +74,8 @@ python repmark_gui.py
 The GUI provides:
 
 - YAML config browsing and recent-config history.
+- Font browsing with a live preview from the `fonts/` folder, updating `font_path` in the selected YAML file.
+- A Stroke control for synthetic bold/thicker text, updating `font_stroke_width` in the selected YAML file.
 - Optional CSV roster browsing with reporting mark prefix entry.
 - One-click decal generation.
 - Toggles for red debug boxes, bbox logging, preview after generation, and opening the output folder.
@@ -104,6 +106,28 @@ The build script creates `dist/repmark.exe`. It supports the same options as the
 dist/repmark.exe --yaml config.yaml --draw-bboxes --log-bboxes
 ```
 
+## Distribution build and version tracking
+
+The visible application version is tracked in `VERSION`. `repmark.py`, RepMark Studio, and the release build all read that same value. Update `VERSION` and the fallback value in `repmark.py` together when making a release/versioned change.
+
+To build the normal Windows distribution ZIP:
+
+```bat
+build_distribution.bat
+```
+
+The distribution build:
+
+- Rebuilds `dist/repmark.exe` and `dist/RepMarkStudio.exe`.
+- Verifies `repmark.exe --version` matches `VERSION`.
+- Verifies `RepMarkStudio.exe --self-test` passes.
+- Creates `release/RepMark-<version>-win64/`.
+- Creates `release/RepMark-<version>-win64.zip`.
+- Writes `RELEASE_MANIFEST.json` with file sizes/checksums.
+- Writes a `.sha256` checksum file for the ZIP.
+
+Use this for user-facing releases instead of handing out the raw `dist/` folder.
+
 ## Output files
 
 The main image path comes from the `out` setting in the YAML file. The sample config writes to `out/decal_custom.png`, so generated files land in an `out/` folder under the folder where the EXE or script is running.
@@ -126,6 +150,7 @@ For example, if `out` is `decal_custom.png`, repmark writes:
 | `font_path`         | string             | Font file path. Relative paths can resolve from the config folder, app folder, or `fonts/`. |
 | `out`               | string             | Output PNG path. |
 | `font_color`        | list of 4 integers | Text color as `[R, G, B, A]`. |
+| `font_stroke_width` | integer            | Synthetic bold/thicker text. `0` uses the font as-is; `1` or `2` adds weight by stroking glyphs. |
 | `draw_bboxes`       | boolean            | Draw red debug boxes without needing `--draw-bboxes`. |
 | `bbox_padding`      | integer, optional  | Extra pixels around debug boxes. If omitted, padding scales with font size. |
 | `side_font`         | integer            | Font size for `side_lines`. |
@@ -144,6 +169,24 @@ For example, if `out` is `decal_custom.png`, repmark writes:
 | `csv_prefix`        | string             | Reporting mark prefix used for one-column CSV files, such as `NS`. |
 | `side_lines`        | list of strings    | Side marks to render. |
 | `end_lines`         | list               | End marks to render. Entries may be strings or mappings with `value` and `stacked`. |
+
+## Font selection
+
+Fonts live in the `fonts/` folder. In RepMark Studio, choose a YAML config and click `Choose Font...` to preview the available `.ttf` and `.otf` files. Selecting a font updates the YAML `font_path` value, for example:
+
+```yaml
+font_path: "fonts/Carknocker.ttf"
+```
+
+The command-line tool uses that saved YAML value on the next generation run.
+
+To make an existing font render heavier without changing fonts, use the GUI Stroke control or set `font_stroke_width`:
+
+```yaml
+font_stroke_width: 1
+```
+
+Use `0` for the true font shape. Values of `1` or `2` are usually useful; larger values can muddy small details.
 
 ## CSV roster import
 
