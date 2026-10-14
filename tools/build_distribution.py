@@ -55,6 +55,11 @@ def copy_required_file(source: Path, target: Path) -> None:
     shutil.copy2(source, target)
 
 
+def run_tests() -> None:
+    run(["uv", "run", "--no-project", "--with", "pillow", "--with", "pyyaml",
+         "python", "-m", "unittest", "discover", "-s", "tests"], timeout=600)
+
+
 def build_exes() -> None:
     run(["cmd.exe", "/c", "build_windows_gui.bat"], timeout=900)
 
@@ -145,10 +150,13 @@ def zip_release(release_dir: Path, zip_path: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build RepMark Windows release ZIP.")
     parser.add_argument("--skip-build", action="store_true", help="Package existing dist EXEs instead of rebuilding them first.")
+    parser.add_argument("--skip-tests", action="store_true", help="Skip the unit/regression tests before building.")
     args = parser.parse_args()
 
     version = read_version()
     print(f"Building RepMark distribution {version}")
+    if not args.skip_tests:
+        run_tests()
     if not args.skip_build:
         build_exes()
     release_dir, zip_path = assemble_release(version)

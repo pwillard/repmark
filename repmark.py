@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 from typing import List, Tuple, Union
 
-VERSION_FALLBACK = "1.0.7"
+VERSION_FALLBACK = "1.0.8"
 
 
 def load_app_version() -> str:
@@ -104,11 +104,10 @@ def app_dir() -> Path:
 def bundled_dir() -> Path:
     return Path(getattr(sys, "_MEIPASS", app_dir())).resolve()
 
-def resolve_font_path(font_path: Path, config_dir: Path | None = None) -> Path:
-    """Resolve fonts from the config folder, app folder, bundled files, or fonts/."""
-    if font_path.is_absolute() and font_path.exists():
-        return font_path
-
+def font_search_paths(font_path: Path, config_dir: Path | None = None) -> List[Path]:
+    """Return the candidate locations checked for a configured font."""
+    if font_path.is_absolute():
+        return [font_path]
     candidates = []
     if config_dir is not None:
         candidates.append(config_dir / font_path)
@@ -117,21 +116,35 @@ def resolve_font_path(font_path: Path, config_dir: Path | None = None) -> Path:
             base / font_path,
             base / "fonts" / font_path.name,
         ])
+    unique = []
     for candidate in candidates:
+        if candidate not in unique:
+            unique.append(candidate)
+    return unique
+
+def resolve_font_path(font_path: Path, config_dir: Path | None = None) -> Path:
+    """Resolve fonts from the config folder, app folder, bundled files, or fonts/."""
+    for candidate in font_search_paths(font_path, config_dir):
         if candidate.exists():
             return candidate
     return font_path
 
 # === Font loader ===
 def load_font(font_path: Path, size: int, config_dir: Path | None = None) -> ImageFont.FreeTypeFont:
+    """Load the configured font, or raise ValueError. Never substitutes another font."""
     resolved_font = resolve_font_path(font_path, config_dir)
+    if not resolved_font.exists():
+        searched = "\n".join(f"     {p}" for p in font_search_paths(font_path, config_dir))
+        raise ValueError(
+            f"Font file not found: '{font_path}'. Looked in:\n{searched}\n"
+            "   Check font_path in the YAML config or choose a font from the fonts/ folder."
+        )
     try:
         return ImageFont.truetype(str(resolved_font), size)
-    except Exception:
-        try:
-            return ImageFont.truetype("DejaVuSans.ttf", size)
-        except Exception:
-            return ImageFont.load_default()
+    except Exception as exc:
+        raise ValueError(
+            f"Font file '{resolved_font}' could not be loaded as a TrueType/OpenType font: {exc}"
+        ) from exc
 
 def normalize_roster_number(value: str) -> str:
     """Normalize a roster number while preserving user-supplied digits/letters."""
@@ -231,7 +244,7 @@ def load_yaml_config(yaml_path: Path) -> dict:
         with yaml_path.open("w", encoding="utf-8") as f:
             yaml.safe_dump(DEFAULT_CONFIG, f, sort_keys=False)
         print(f"✅ Default config created at '{yaml_path}'. Edit it to customize.")
-        return DEFAULT_CONFIG
+        return {**DEFAULT_CONFIG, "_config_dir": str(yaml_path.resolve().parent)}
     try:
         with yaml_path.open("r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
@@ -545,38 +558,76 @@ def open_preview(out_path: Path):
     print(f"👁️ Preview opened: {resolved_path}")
     return True
 
-def export_and_draw_bounding_boxes(
-    draw,
-    image,
-    side_results,
-    end_results,
-    out_path_base="bbox_data",
-    draw_boxes=False,
-    side_font_size=64,
-    end_font_size=28,
-    bbox_padding=None  # None means auto-scale mode
-):
+def check_line_counts(side_lines, end_lines) -> str | None:
+    """Return a warning message when side and end mark counts differ, else None."""
+    side_count, end_count = len(side_lines), len(end_lines)
+    if side_count == end_count:
+        return None
+    return (
+        f"{side_count} side_lines but {end_count} end_lines. "
+        "Side and end marks are paired by row, so rows after the shorter list will not have a match."
+    )
+
+def bbox_to_uv(bbox, width, height) -> List[float]:
+    """Convert a pixel bbox (x0, y0, x1, y1; origin top-left) to Blender-style UVs.
+
+    Returns [u_min, v_min, u_max, v_max] with the UV origin at the bottom-left,
+    so V is flipped relative to image pixel rows.
+    """
+    x0, y0, x1, y1 = bbox
+    return [
+        round(x0 / width, 6),
+        round(1 - y1 / height, 6),
+        round(x1 / width, 6),
+        round(1 - y0 / height, 6),
+    ]
+
+def union_bbox(*boxes):
+    return (
+        min(b[0] for b in boxes),
+        min(b[1] for b in boxes),
+        max(b[2] for b in boxes),
+        max(b[3] for b in boxes),
+    )
+
+def export_bbox_data(side_results, end_results, out_path_base, width, height):
+    """Write human-readable and JSON bounding box data, including UVs."""
     txt_path = Path(f"{out_path_base}_bboxes.txt")
     json_path = Path(f"{out_path_base}_bboxes.json")
     txt_path.parent.mkdir(parents=True, exist_ok=True)
 
     # --- Text log ---
     with txt_path.open("w", encoding="utf-8") as f:
+        f.write(f"Canvas: {width}x{height} px. UV = [u_min, v_min, u_max, v_max], origin bottom-left.\n\n")
         f.write("=== SIDE LINES BOUNDARIES ===\n")
         for line, bbox in side_results:
-            f.write(f"[SIDE] {line:>10s}  bbox={bbox}\n")
+            f.write(f"[SIDE] {line:>10s}  bbox={bbox}  uv={bbox_to_uv(bbox, width, height)}\n")
         f.write("\n=== END LINES BOUNDARIES ===\n")
         for line, bbox_top, bbox_bottom in end_results:
             if bbox_top == bbox_bottom:
-                f.write(f"[END ] {line:>10s}  bbox={bbox_top}\n")
+                f.write(f"[END ] {line:>10s}  bbox={bbox_top}  uv={bbox_to_uv(bbox_top, width, height)}\n")
             else:
-                f.write(f"[END ] {line:>10s}  top={bbox_top}  bottom={bbox_bottom}\n")
+                combined = union_bbox(bbox_top, bbox_bottom)
+                f.write(f"[END ] {line:>10s}  top={bbox_top}  bottom={bbox_bottom}  "
+                        f"uv={bbox_to_uv(combined, width, height)}\n")
 
     # --- JSON data ---
     data = {
-        "side": [{"text": line, "bbox": bbox} for line, bbox in side_results],
+        "canvas": {"width": width, "height": height, "uv_origin": "bottom-left"},
+        "side": [
+            {"text": line, "bbox": list(bbox), "uv": bbox_to_uv(bbox, width, height)}
+            for line, bbox in side_results
+        ],
         "end": [
-            {"text": line, "bbox_top": bbox_top, "bbox_bottom": bbox_bottom}
+            {
+                "text": line,
+                "bbox_top": list(bbox_top),
+                "bbox_bottom": list(bbox_bottom),
+                "bbox": list(union_bbox(bbox_top, bbox_bottom)),
+                "uv_top": bbox_to_uv(bbox_top, width, height),
+                "uv_bottom": bbox_to_uv(bbox_bottom, width, height),
+                "uv": bbox_to_uv(union_bbox(bbox_top, bbox_bottom), width, height),
+            }
             for line, bbox_top, bbox_bottom in end_results
         ],
     }
@@ -584,33 +635,41 @@ def export_and_draw_bounding_boxes(
         json.dump(data, jf, indent=2)
     print(f"🧾 Bounding box data saved → {txt_path} & {json_path}")
 
-    if draw_boxes:
-        # If no manual bbox_padding provided, scale padding to font size
-        if bbox_padding is None:
-            side_padding = max(2, int(side_font_size * 0.1))  # 10% of side font
-            end_padding = max(2, int(end_font_size * 0.1))    # 10% of end font
-            print(f"📐 Auto-padding: {side_padding}px (side), {end_padding}px (end)")
-        else:
-            side_padding = end_padding = bbox_padding
-            print(f"📐 Manual padding: {bbox_padding}px")
-
-        def pad_bbox(b, pad):
-            x0, y0, x1, y1 = b
-            return (x0 - pad, y0 - pad, x1 + pad, y1 + pad)
-
-        # Draw side line outlines
-        for _, bbox in side_results:
-            draw.rectangle(pad_bbox(bbox, side_padding), outline=(255, 0, 0, 255), width=2)
-
-        # Draw end line outlines
-        for _, bbox_top, bbox_bottom in end_results:
-            draw.rectangle(pad_bbox(bbox_top, end_padding), outline=(255, 0, 0, 255), width=2)
-            if bbox_bottom != bbox_top:
-                draw.rectangle(pad_bbox(bbox_bottom, end_padding), outline=(255, 0, 0, 255), width=2)
-
-        print("🎨 Red outlines drawn on image.")
+def draw_bounding_boxes(
+    image,
+    side_results,
+    end_results,
+    side_font_size=64,
+    end_font_size=28,
+    bbox_padding=None  # None means auto-scale mode
+):
+    """Draw red debug outlines onto image (call this on a copy, not the clean decal)."""
+    draw = ImageDraw.Draw(image)
+    # If no manual bbox_padding provided, scale padding to font size
+    if bbox_padding is None:
+        side_padding = max(2, int(side_font_size * 0.1))  # 10% of side font
+        end_padding = max(2, int(end_font_size * 0.1))    # 10% of end font
+        print(f"📐 Auto-padding: {side_padding}px (side), {end_padding}px (end)")
     else:
-        print("🎨 Red outlines skipped (draw_bboxes=False).")
+        side_padding = end_padding = bbox_padding
+        print(f"📐 Manual padding: {bbox_padding}px")
+
+    def pad_bbox(b, pad):
+        x0, y0, x1, y1 = b
+        return (x0 - pad, y0 - pad, x1 + pad, y1 + pad)
+
+    # Draw side line outlines
+    for _, bbox in side_results:
+        draw.rectangle(pad_bbox(bbox, side_padding), outline=(255, 0, 0, 255), width=2)
+
+    # Draw end line outlines
+    for _, bbox_top, bbox_bottom in end_results:
+        draw.rectangle(pad_bbox(bbox_top, end_padding), outline=(255, 0, 0, 255), width=2)
+        if bbox_bottom != bbox_top:
+            draw.rectangle(pad_bbox(bbox_bottom, end_padding), outline=(255, 0, 0, 255), width=2)
+
+def debug_image_path(out_path: Path) -> Path:
+    return out_path.with_name(f"{out_path.stem}_debug{out_path.suffix or '.png'}")
 
 # === Main ===
 def main():
@@ -626,7 +685,7 @@ def main():
     args = ap.parse_args()
 
     try:
-        cfg = load_yaml_config(Path(args.yaml)) if args.yaml else DEFAULT_CONFIG
+        cfg = load_yaml_config(Path(args.yaml)) if args.yaml else dict(DEFAULT_CONFIG)
     except ValueError as exc:
         print(f"❌ {exc}")
         sys.exit(2)
@@ -662,11 +721,19 @@ def main():
     end_lines = cfg["end_lines"]
 
     # --- Canvas ---
+    try:
+        side_font = load_font(font_path, cfg["side_font"], config_dir)
+        end_font  = load_font(font_path, cfg["end_font"], config_dir)
+    except ValueError as exc:
+        print(f"❌ {exc}")
+        sys.exit(2)
+
+    count_warning = check_line_counts(side_lines, end_lines)
+    if count_warning:
+        print(f"⚠️ Layout warning: {count_warning}")
+
     image = Image.new("RGBA", (w, h), bg)
     draw = ImageDraw.Draw(image)
-
-    side_font = load_font(font_path, cfg["side_font"], config_dir)
-    end_font  = load_font(font_path, cfg["end_font"], config_dir)
 
     # --- Draw sides ---
     side_results = draw_block_inline(draw, side_lines, side_font, (cfg["side_x"], cfg["side_y"]), cfg["side_spacing"], font_color, font_stroke_width)
@@ -688,23 +755,28 @@ def main():
 
     warn_if_text_exceeds_canvas(side_results, end_results, w, h)
 
-    # --- Save image and export data ---
-    export_and_draw_bounding_boxes(
-        draw,
-        image,
-        side_results,
-        end_results,
-        out_path_base=out_path.with_suffix(""),
-        draw_boxes=draw_bboxes,
-        side_font_size=cfg["side_font"],
-        end_font_size=cfg["end_font"],
-        bbox_padding=cfg.get("bbox_padding", None)
-    )
+    # --- Save clean image and export data ---
+    export_bbox_data(side_results, end_results, out_path.with_suffix(""), w, h)
 
-
-    # Save after drawing outlines (so they’re visible)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(out_path)
+
+    # Debug outlines go on a separate copy so the decal itself stays clean.
+    debug_path = None
+    if draw_bboxes:
+        debug_image = image.copy()
+        draw_bounding_boxes(
+            debug_image,
+            side_results,
+            end_results,
+            side_font_size=cfg["side_font"],
+            end_font_size=cfg["end_font"],
+            bbox_padding=cfg.get("bbox_padding", None),
+        )
+        debug_path = debug_image_path(out_path)
+        debug_image.save(debug_path)
+        debug_image.close()
+        print(f"🎨 Debug image with red outlines saved → {debug_path}")
     image.close()
 
     if args.log_bboxes:
@@ -719,7 +791,7 @@ def main():
     print(f"✅ Done. Output saved to {out_path}")
 
     if args.preview:
-        open_preview(out_path)
+        open_preview(debug_path or out_path)
 
 if __name__ == "__main__":
     main()

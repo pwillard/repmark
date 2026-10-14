@@ -29,7 +29,7 @@ The Windows command-line EXE accepts the same options:
 dist/repmark.exe --yaml config.yaml
 ```
 
-Draw red debug boxes around each text element:
+Draw red debug boxes around each text element. The boxes are written to a separate `<name>_debug.png`; the main decal PNG is always clean:
 
 ```bash
 python repmark.py --yaml config.yaml --draw-bboxes
@@ -41,7 +41,7 @@ Print bounding boxes to the console:
 python repmark.py --yaml config.yaml --log-bboxes
 ```
 
-Open the generated image after saving:
+Open the generated image after saving (opens the `_debug.png` when debug boxes are on):
 
 ```bash
 python repmark.py --yaml config.yaml --preview
@@ -106,6 +106,16 @@ The build script creates `dist/repmark.exe`. It supports the same options as the
 dist/repmark.exe --yaml config.yaml --draw-bboxes --log-bboxes
 ```
 
+## Tests
+
+Regression tests live in `tests/` and use the standard-library `unittest` runner. With `uv` installed:
+
+```bat
+run_tests.bat
+```
+
+`build_distribution.bat` runs the tests before building and stops if any fail (use `--skip-tests` to bypass).
+
 ## Distribution build and version tracking
 
 The visible application version is tracked in `VERSION`. `repmark.py`, RepMark Studio, and the release build all read that same value. Update `VERSION` and the fallback value in `repmark.py` together when making a release/versioned change.
@@ -118,6 +128,7 @@ build_distribution.bat
 
 The distribution build:
 
+- Runs the regression tests in `tests/`.
 - Rebuilds `dist/repmark.exe` and `dist/RepMarkStudio.exe`.
 - Verifies `repmark.exe --version` matches `VERSION`.
 - Verifies `RepMarkStudio.exe --self-test` passes.
@@ -136,9 +147,32 @@ For example, if `out` is `decal_custom.png`, repmark writes:
 
 | File                         | Description                                                          |
 | ---------------------------- | -------------------------------------------------------------------- |
-| `decal_custom.png`           | Rendered transparent decal sheet.                                    |
-| `decal_custom_bboxes.txt`    | Human-readable pixel coordinates for all rendered text.              |
-| `decal_custom_bboxes.json`   | Machine-readable coordinates for Blender/Open Rails scripting.       |
+| `decal_custom.png`           | Rendered transparent decal sheet. Never contains debug boxes.        |
+| `decal_custom_debug.png`     | Same sheet with red debug boxes. Only written with `--draw-bboxes` or `draw_bboxes: true`. |
+| `decal_custom_bboxes.txt`    | Human-readable pixel coordinates and UVs for all rendered text.      |
+| `decal_custom_bboxes.json`   | Machine-readable pixel coordinates and UVs for Blender/Open Rails scripting. |
+
+### Bounding box JSON and UVs
+
+Pixel boxes are `[x0, y0, x1, y1]` with the origin at the top-left of the image.
+UVs are `[u_min, v_min, u_max, v_max]` in the 0-1 range with the origin at the **bottom-left**, matching Blender's UV editor, so they can be applied to a mesh without flipping.
+
+```json
+{
+  "canvas": {"width": 2048, "height": 2048, "uv_origin": "bottom-left"},
+  "side": [
+    {"text": "998 235", "bbox": [5, 33, 468, 126], "uv": [0.002441, 0.938477, 0.228516, 0.983887]}
+  ],
+  "end": [
+    {"text": "NS 998235",
+     "bbox_top": [500, 26, 578, 68], "bbox_bottom": [500, 85, 687, 126],
+     "bbox": [500, 26, 687, 126],
+     "uv_top": [...], "uv_bottom": [...], "uv": [...]}
+  ]
+}
+```
+
+For end marks, `bbox`/`uv` cover the whole mark (both stacked parts); `bbox_top`/`uv_top` and `bbox_bottom`/`uv_bottom` cover each part.
 
 ## Configuration reference
 
@@ -245,6 +279,10 @@ String-only entries are also accepted. They use the global `end_inline` setting:
 ## Validation and layout warnings
 
 repmark validates the YAML before rendering. Invalid values are reported as grouped errors instead of Python tracebacks.
+
+If the configured font cannot be found or loaded, repmark stops with an error listing the folders it searched. It never silently substitutes another font.
+
+If `side_lines` and `end_lines` have different counts, repmark warns that the rows will not pair up. The decal is still generated.
 
 After rendering, repmark checks every text bounding box. If text falls outside the image canvas, it prints a warning showing which entry overflowed and by how many pixels.
 
